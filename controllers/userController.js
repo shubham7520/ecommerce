@@ -59,43 +59,50 @@ const Register = async (req, res, next) => {
 
 const Login = async (req, res, next) => {
 
-    if (!req.body.email || !req.body.password) {
-        return res.status(400).json({
-            success: false,
-            message: "Please Enter Email and Password"
+    try {
+        if (!req.body.email || !req.body.password) {
+            return res.status(400).json({
+                success: false,
+                message: "Please Enter Email and Password"
+            })
+        }
+
+        const user = await User.findOne({ email: req.body.email }).select("+password");
+
+        if (!user) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid Email or Password"
+            })
+        }
+
+        const isPasswordMatch = await user.comparePassword(req.body.password);
+
+        if (!isPasswordMatch) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid Email or Password"
+            })
+        }
+
+        const Token = user.getJWTToken();
+
+        const option = {
+            expire: new Date(Date.now() + process.env.COOKIE_EXPIRE * 24 * 60 * 60 * 1000),
+            httpOnly: true
+        }
+
+        res.status(200).cookie("token", Token, option).json({
+            success: true,
+            Token,
+            user
         })
-    }
-
-    const user = await User.findOne({ email: req.body.email }).select("+password");
-
-    if (!user) {
-        return res.status(400).json({
+    } catch (err) {
+        res.status(500).json({
             success: false,
-            message: "Invalid Email or Password"
-        })
+            message: "Enternal Server Error."
+        });
     }
-
-    const isPasswordMatch = await user.comparePassword(req.body.password);
-
-    if (!isPasswordMatch) {
-        return res.status(400).json({
-            success: false,
-            message: "Invalid Email or Password"
-        })
-    }
-
-    const Token = user.getJWTToken();
-
-    const option = {
-        expire: new Date(Date.now() + process.env.COOKIE_EXPIRE * 24 * 60 * 60 * 1000),
-        httpOnly: true
-    }
-
-    res.status(200).cookie("token", Token, option).json({
-        success: true,
-        Token,
-        user
-    })
 
 }
 
@@ -103,15 +110,22 @@ const Login = async (req, res, next) => {
 
 const Logout = (req, res, next) => {
 
-    res.cookie("token", "", {
-        expire: new Date(Date.now()),
-        httpOnly: true,
-    })
+    try {
+        res.cookie("token", "", {
+            expire: new Date(Date.now()),
+            httpOnly: true,
+        })
 
-    res.status(200).json({
-        success: true,
-        message: "Logout Successfully",
-    })
+        res.status(200).json({
+            success: true,
+            message: "Logout Successfully",
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            message: "Enternal Server Error."
+        });
+    }
 
 }
 
@@ -164,79 +178,102 @@ const Forgot = async (req, res, next) => {
 // Reset Password
 
 const Reset = async (req, res, next) => {
+    try {
+        const resetPasswordToken = crypto.createHash("sha256").update(req.params.token).digest("hex");
 
-    const resetPasswordToken = crypto.createHash("sha256").update(req.params.token).digest("hex");
+        const user = await User.findOne({
+            resetPasswordToken,
+            resetPasswordExpire: { $gt: Date.now() },
+        });
 
-    const user = await User.findOne({
-        resetPasswordToken,
-        resetPasswordExpire: { $gt: Date.now() },
-    });
+        if (!user) {
+            return res.status(400).json({
+                message: "Reset Password Token is invalid or has been expired",
+            })
+        }
 
-    if (!user) {
-        return res.status(400).json({
-            message: "Reset Password Token is invalid or has been expired",
-        })
+        if (req.body.password !== req.body.confirmPassword) {
+            return res.status(400).json({
+                message: "Please enter both password should be same"
+            })
+        }
+        user.password = req.body.password;
+        user.resetPasswordExpire = undefined;
+        user.resetPasswordToken = undefined;
+
+        await user.save();
+
+        res.status(200).json({
+            success: true,
+            message: "Password Reset Successfully",
+            user
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            message: "Enternal Server Error."
+        });
     }
-
-    if (req.body.password !== req.body.confirmPassword) {
-        return res.status(400).json({
-            message: "Please enter both password should be same"
-        })
-    }
-    user.password = req.body.password;
-    user.resetPasswordExpire = undefined;
-    user.resetPasswordToken = undefined;
-
-    await user.save();
-
-    res.status(200).json({
-        success: true,
-        message: "Password Reset Successfully",
-        user
-    })
 }
 
 // User Detail
 
 const userDetail = async (req, res, next) => {
 
-    const user = await User.findById(req.user.id);
+    try {
+        const user = await User.findById(req.user.id);
 
-    res.status(200).json({
-        success: true,
-        message: "User detail",
-        user
-    })
+        res.status(200).json({
+            success: true,
+            message: "User detail",
+            user
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            message: "Enternal Server Error."
+        });
+    }
+
+
 }
 
 //Update Password
 
 const updatePassword = async (req, res, next) => {
-    const user = await User.findById(req.user.id).select("+password");
 
-    const isPasswordMatch = await user.comparePassword(req.body.oldPassword);
+    try {
+        const user = await User.findById(req.user.id).select("+password");
 
-    if (!isPasswordMatch) {
-        return res.status(400).json({
+        const isPasswordMatch = await user.comparePassword(req.body.oldPassword);
+
+        if (!isPasswordMatch) {
+            return res.status(400).json({
+                success: false,
+                message: "Old Password is incorrect"
+            })
+        }
+
+        if (req.body.newPassword !== req.body.confirmPassword) {
+            return es.status(400).json({
+                success: false,
+                message: "password does not match"
+            })
+        }
+        user.password = req.body.newPassword;
+
+        await user.save();
+
+        res.status(200).json({
+            success: true,
+            user
+        });
+    } catch (err) {
+        res.status(500).json({
             success: false,
-            message: "Old Password is incorrect"
-        })
+            message: "Enternal Server Error."
+        });
     }
-
-    if (req.body.newPassword !== req.body.confirmPassword) {
-        return es.status(400).json({
-            success: false,
-            message: "password does not match"
-        })
-    }
-    user.password = req.body.newPassword;
-
-    await user.save();
-
-    res.status(200).json({
-        success: true,
-        user
-    })
 
 }
 
@@ -244,96 +281,133 @@ const updatePassword = async (req, res, next) => {
 
 const updateProfile = async (req, res, next) => {
 
-    const newData = {
-        name: req.body.name
+    try {
+        const newData = {
+            name: req.body.name
+        }
+        await User.findByIdAndUpdate(req.user.id, newData, {
+            new: true,
+            runValidators: true,
+            useFindAndModify: false
+        });
+        res.status(200).json({
+            success: true,
+            message: "Profile Update Successfully"
+        })
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            message: "Enternal Server Error."
+        });
     }
-    await User.findByIdAndUpdate(req.user.id, newData, {
-        new: true,
-        runValidators: true,
-        useFindAndModify: false
-    });
-    res.status(200).json({
-        success: true,
-        message: "Profile Update Successfully"
-    })
 
 }
 
 //Get All Users -- Admin
 
 const getAllUsers = async (req, res, next) => {
-    const users = await User.find();
 
-    res.status(200).json({
-        success: true,
-        users
-    })
+    try {
+        const users = await User.find();
+
+        res.status(200).json({
+            success: true,
+            users
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            message: "Enternal Server Error."
+        });
+    }
 }
 
 // Get SingleUser --Admin
 
 const getSingleUser = async (req, res, next) => {
+    try {
 
-    const user = await User.findById(req.params.id);
+        const user = await User.findById(req.params.id);
 
-    if (!user) {
-        return res.status(400).json({
+        if (!user) {
+            return res.status(400).json({
+                success: false,
+                message: "User does not exist"
+            })
+        }
+
+        res.status(200).json({
+            success: true,
+            user
+        });
+    } catch (err) {
+        res.status(500).json({
             success: false,
-            message: "User does not exist"
-        })
+            message: "Enternal Server Error."
+        });
     }
-
-    res.status(200).json({
-        success: true,
-        user
-    })
 }
 
 // Update User by Admin
 
 const updateUser = async (req, res, next) => {
-    const newData = {
-        name: req.body.name,
-        role: req.body.role
-    }
 
-    let user = await User.findById(req.params.id);
+    try {
+        const newData = {
+            name: req.body.name,
+            role: req.body.role
+        }
 
-    if (!user) {
-        return res.status(404).json({
-            success: false,
-            message: "User Not exist"
+        let user = await User.findById(req.params.id);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User Not exist"
+            })
+        }
+
+        user = await User.findByIdAndUpdate(req.params.id, newData, {
+            new: true,
+            runValidators: true,
+            useFindAndModify: false
         })
+
+        res.status(200).json({
+            success: true
+        })
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            message: "Enternal Server Error."
+        });
     }
-
-    user = await User.findByIdAndUpdate(req.params.id, newData, {
-        new: true,
-        runValidators: true,
-        useFindAndModify: false
-    })
-
-    res.status(200).json({
-        success: true
-    })
-
 }
 
 // Delete User by Admin
 
 const deleteUser = async (req, res, next) => {
-    const user = await User.findById(req.params.id);
-    if (!user) {
-        return res.status(404).json({
-            success: false,
-            message: "User Not exist"
-        })
-    }
-    await user.remove();
 
-    res.status(200).json({
-        success: true,
-        message: "User Deleted Successfully"
-    })
+    try {
+        const user = await User.findById(req.params.id);
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User Not exist"
+            })
+        }
+        await user.remove();
+
+        res.status(200).json({
+            success: true,
+            message: "User Deleted Successfully"
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            message: "Enternal Server Error."
+        });
+    }
 }
 
 export { Register, Login, Logout, Forgot, Reset, userDetail, updatePassword, updateProfile, getAllUsers, getSingleUser, updateUser, deleteUser };
